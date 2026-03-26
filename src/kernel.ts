@@ -57,6 +57,7 @@ import {
   LOCAL_SCREENSHOT_PATH,
 } from "./constants.js";
 import { SessionLogger } from "./logger.js";
+import { TodoStore } from "./todo-store.js";
 
 // ===========================================
 // Screen Perception
@@ -177,6 +178,9 @@ async function getDecisionStreaming(
 
 export async function runAgent(goal: string, maxSteps?: number): Promise<{ success: boolean; stepsUsed: number }> {
   const steps = maxSteps ?? Config.MAX_STEPS;
+  const todoStore = new TodoStore(Config.TODO_FILE);
+  const { todo, duplicateCompleted } = todoStore.beginGoal(goal);
+  const todoContext = todoStore.buildPromptContext(goal, todo.id);
 
   // Phase 1A: Auto-detect screen resolution
   const resolution = getScreenResolution();
@@ -193,6 +197,10 @@ export async function runAgent(goal: string, maxSteps?: number): Promise<{ succe
   console.log(`Max steps: ${steps} | Step delay: ${Config.STEP_DELAY}s`);
   console.log(`Vision: ${Config.VISION_MODE} | Streaming: ${Config.STREAMING_ENABLED}`);
   console.log(`Max elements: ${Config.MAX_ELEMENTS} | History: ${Config.MAX_HISTORY_STEPS} steps`);
+  console.log(`Todo ID: ${todo.id} | Todo file: ${Config.TODO_FILE}`);
+  if (duplicateCompleted.length > 0) {
+    console.log(`Note: found ${duplicateCompleted.length} previously completed run(s) for this exact goal.`);
+  }
 
   const llm = getLlmProvider();
 
@@ -352,7 +360,7 @@ export async function runAgent(goal: string, maxSteps?: number): Promise<{ succe
       ? `LAST_ACTION_RESULT: ${lastActionFeedback}\n\n`
       : "";
     const textContent =
-      `GOAL: ${goal}\n\n${foregroundLine}${actionFeedbackLine}SCREEN_CONTEXT:\n${screenContext}${diffContext}${visionContext}`;
+      `GOAL: ${goal}\n\nTODO_MEMORY:\n${todoContext}\n\n${foregroundLine}${actionFeedbackLine}SCREEN_CONTEXT:\n${screenContext}${diffContext}${visionContext}`;
 
     // Build content parts (text + optional image)
     const userContent: ContentPart[] = [{ type: "text", text: textContent }];
@@ -442,6 +450,7 @@ export async function runAgent(goal: string, maxSteps?: number): Promise<{ succe
     // 7. Check for goal completion
     if (decision.action === "done") {
       console.log("\nTask completed successfully.");
+      todoStore.completeGoal(todo.id, decision.reason ?? "Marked done by agent");
       logger.finalize(true);
       return { success: true, stepsUsed: step + 1 };
     }
@@ -451,6 +460,7 @@ export async function runAgent(goal: string, maxSteps?: number): Promise<{ succe
   }
 
   console.log("\nMax steps reached. Task may be incomplete.");
+  todoStore.failGoal(todo.id, "Max steps reached before completion");
   logger.finalize(false);
   return { success: false, stepsUsed: steps };
 }
@@ -481,6 +491,24 @@ async function main(): Promise<void> {
     Config.validate();
   } catch (e) {
     console.log(`Configuration Error: ${(e as Error).message}`);
+    return;
+  }
+
+  if (process.argv.includes("--todos")) {
+    const todoStore = new TodoStore(Config.TODO_FILE);
+    const todos = todoStore.listTodos();
+    if (todos.length === 0) {
+      console.log(`No todos found in ${Config.TODO_FILE}`);
+      return;
+    }
+
+    console.log(`Todo file: ${Config.TODO_FILE}\n`);
+    for (const todo of todos) {
+      const note = todo.status === "completed" ? todo.completionNote : todo.failureNote;
+      console.log(`[${todo.status.toUpperCase()}] ${todo.goal}`);
+      console.log(`  id=${todo.id} updated=${todo.updatedAt} runs=${todo.runCount}`);
+      if (note) console.log(`  note=${note}`);
+    }
     return;
   }
 

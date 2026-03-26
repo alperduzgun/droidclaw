@@ -606,6 +606,130 @@ class BedrockProvider implements LLMProvider {
 }
 
 // ===========================================
+// Qwen CLI Provider
+// ===========================================
+
+class QwenCliProvider implements LLMProvider {
+  readonly capabilities = {
+    supportsImages: Config.QWEN_CLI_SUPPORTS_IMAGES,
+    supportsStreaming: false,
+  };
+
+  private buildPromptParts(messages: ChatMessage[]) {
+    const parts: Array<
+      { type: "text"; text: string } |
+      { type: "image"; mimeType: string; data: string }
+    > = [];
+
+    for (const msg of messages.filter((m) => m.role !== "system")) {
+      if (typeof msg.content === "string") {
+        parts.push({ type: "text", text: `${msg.role.toUpperCase()}:\n${msg.content}` });
+        continue;
+      }
+
+      const textParts = msg.content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text);
+
+      if (textParts.length > 0) {
+        parts.push({
+          type: "text",
+          text: `${msg.role.toUpperCase()}:\n${textParts.join("\n")}`,
+        });
+      }
+
+      for (const part of msg.content) {
+        if (
+          part.type === "image" &&
+          this.capabilities.supportsImages
+        ) {
+          parts.push({
+            type: "image",
+            mimeType: part.mimeType,
+            data: part.base64,
+          });
+        }
+      }
+    }
+
+    parts.push({
+      type: "text",
+      text:
+        "Return ONLY a valid JSON object for the next Android action. " +
+        "Do not use markdown fences or commentary.",
+    });
+
+    return parts;
+  }
+
+  private parseStreamJsonOutput(output: string): ActionDecision {
+    const lines = output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const parsed = JSON.parse(lines[i]) as Record<string, any>;
+        if (parsed.type === "result" && typeof parsed.result === "string") {
+          return parseJsonResponse(parsed.result);
+        }
+      } catch {
+        // ignore malformed lines
+      }
+    }
+
+    throw new Error("Qwen CLI stream-json output did not contain a final result");
+  }
+
+  async getDecision(messages: ChatMessage[]): Promise<ActionDecision> {
+    const systemPrompt = messages.find((msg) => msg.role === "system");
+    const proc = Bun.spawn(
+      [
+        Config.QWEN_CLI_BIN,
+        "--auth-type",
+        Config.QWEN_CLI_AUTH_TYPE,
+        "--output-format",
+        "stream-json",
+        "--input-format",
+        "stream-json",
+        "--system-prompt",
+        typeof systemPrompt?.content === "string" ? systemPrompt.content : SYSTEM_PROMPT,
+      ],
+      {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: process.env,
+      }
+    );
+
+    const payload = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: this.buildPromptParts(messages),
+      },
+    });
+
+    proc.stdin.write(`${payload}\n`);
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    if (exitCode !== 0) {
+      throw new Error(stderr.trim() || `Qwen CLI failed with exit code ${exitCode}`);
+    }
+
+    return this.parseStreamJsonOutput(stdout);
+  }
+}
+
+// ===========================================
 // Shared JSON Parsing
 // ===========================================
 
@@ -654,6 +778,9 @@ export function getLlmProvider(): LLMProvider {
   }
   if (Config.LLM_PROVIDER === "openrouter") {
     return new OpenRouterProvider();
+  }
+  if (Config.LLM_PROVIDER === "qwen-cli") {
+    return new QwenCliProvider();
   }
   // OpenAI, Groq, and Ollama all use OpenAI-compatible API
   return new OpenAIProvider();

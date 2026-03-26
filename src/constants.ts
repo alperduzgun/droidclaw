@@ -82,6 +82,7 @@ export const DEFAULT_OPENAI_MODEL = "gpt-4o";
 export const DEFAULT_BEDROCK_MODEL = "us.meta.llama3-3-70b-instruct-v1:0";
 export const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet";
 export const DEFAULT_OLLAMA_MODEL = "llama3.2";
+export const DEFAULT_QWEN_CLI_MODEL = "coder-model";
 
 // ===========================================
 // Bedrock Model Identifiers

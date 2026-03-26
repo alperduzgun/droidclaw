@@ -14,6 +14,7 @@ import {
   DEFAULT_OPENAI_MODEL,
   DEFAULT_BEDROCK_MODEL,
   DEFAULT_OLLAMA_MODEL,
+  DEFAULT_QWEN_CLI_MODEL,
   DEFAULT_MAX_RETRIES,
   DEFAULT_STUCK_THRESHOLD,
   DEFAULT_MAX_ELEMENTS,
@@ -50,6 +51,7 @@ export const Config = {
 
   // Session logging
   LOG_DIR: env("LOG_DIR", DEFAULT_LOG_DIR),
+  TODO_FILE: env("TODO_FILE", `${DEFAULT_LOG_DIR}/todos.json`),
 
   // Multi-turn memory
   MAX_HISTORY_STEPS: parseInt(env("MAX_HISTORY_STEPS", String(DEFAULT_MAX_HISTORY_STEPS)), 10),
@@ -57,7 +59,7 @@ export const Config = {
   // Streaming responses
   STREAMING_ENABLED: env("STREAMING_ENABLED", String(DEFAULT_STREAMING_ENABLED)) === "true",
 
-  // LLM Provider: "groq", "openai", "bedrock", "openrouter", or "ollama"
+  // LLM Provider: "groq", "openai", "bedrock", "openrouter", "ollama", or "qwen-cli"
   LLM_PROVIDER: env("LLM_PROVIDER", "groq"),
 
   // Groq Configuration
@@ -80,12 +82,19 @@ export const Config = {
   OLLAMA_BASE_URL: env("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
   OLLAMA_MODEL: env("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
 
+  // Qwen CLI Configuration (local CLI wrapper)
+  QWEN_CLI_BIN: env("QWEN_CLI_BIN", "qwen"),
+  QWEN_CLI_MODEL: env("QWEN_CLI_MODEL", DEFAULT_QWEN_CLI_MODEL),
+  QWEN_CLI_AUTH_TYPE: env("QWEN_CLI_AUTH_TYPE", "qwen-oauth"),
+  QWEN_CLI_SUPPORTS_IMAGES: env("QWEN_CLI_SUPPORTS_IMAGES", "false") === "true",
+
   getModel(): string {
     const provider = Config.LLM_PROVIDER;
     if (provider === "groq") return Config.GROQ_MODEL;
     if (provider === "bedrock") return Config.BEDROCK_MODEL;
     if (provider === "openrouter") return Config.OPENROUTER_MODEL;
     if (provider === "ollama") return Config.OLLAMA_MODEL;
+    if (provider === "qwen-cli") return Config.QWEN_CLI_MODEL;
     return Config.OPENAI_MODEL;
   },
 
