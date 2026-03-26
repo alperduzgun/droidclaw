@@ -8,6 +8,7 @@ DEVICE="${DEVICE:-${PHONE_IP}:${ADB_PORT}}"
 PROJECT_DIR="${PROJECT_DIR:-/Users/alperduzgun/droidclaw}"
 ADB_BIN="${ADB_BIN:-adb}"
 BUN_BIN="${BUN_BIN:-bun}"
+SCREENSHOT_DIR="${SCREENSHOT_DIR:-${PROJECT_DIR}/screenshots}"
 
 usage() {
   cat <<EOF
@@ -19,6 +20,7 @@ Commands:
   status       Show Tailscale/ADB status
   start        Connect and run DroidClaw kernel
   goal         Ask for a goal and run DroidClaw
+  screenshot   Capture a screenshot from the remote phone
   shell        Open adb shell on the remote phone
   devices      Show adb devices
   disconnect   Disconnect remote ADB session
@@ -28,6 +30,7 @@ Optional overrides:
   ADB_PORT=5555
   DEVICE=100.x.y.z:5555
   PROJECT_DIR=/path/to/droidclaw
+  SCREENSHOT_DIR=/path/to/screenshots
 EOF
 }
 
@@ -85,6 +88,27 @@ open_shell() {
   exec "$ADB_BIN" -s "$DEVICE" shell
 }
 
+capture_screenshot() {
+  connect_device
+
+  mkdir -p "$SCREENSHOT_DIR"
+
+  local ts
+  ts="$(date +%Y%m%d-%H%M%S)"
+  local remote_path="/sdcard/droidclaw-${ts}.png"
+  local local_path="${SCREENSHOT_DIR}/droidclaw-${ts}.png"
+
+  "$ADB_BIN" -s "$DEVICE" shell screencap -p "$remote_path"
+  "$ADB_BIN" -s "$DEVICE" pull "$remote_path" "$local_path" >/dev/null
+
+  echo "Screenshot saved:"
+  echo "  ${local_path}"
+
+  if command -v open >/dev/null 2>&1; then
+    open "$local_path" >/dev/null 2>&1 || true
+  fi
+}
+
 disconnect_device() {
   "$ADB_BIN" disconnect "$DEVICE"
 }
@@ -99,10 +123,11 @@ Remote DroidClaw
   1. Status
   2. Connect
   3. Start DroidClaw and enter goal
-  4. Open adb shell
-  5. Show adb devices
-  6. Disconnect
-  7. Change device IP/port
+  4. Capture screenshot
+  5. Open adb shell
+  6. Show adb devices
+  7. Disconnect
+  8. Change device IP/port
   0. Exit
 EOF
 
@@ -125,17 +150,21 @@ EOF
         ;;
       4)
         ensure_tools
-        open_shell
+        capture_screenshot
         ;;
       5)
         ensure_tools
-        "$ADB_BIN" devices
+        open_shell
         ;;
       6)
         ensure_tools
-        disconnect_device
+        "$ADB_BIN" devices
         ;;
       7)
+        ensure_tools
+        disconnect_device
+        ;;
+      8)
         printf "Phone IP [%s]: " "$PHONE_IP"
         local new_ip
         IFS= read -r new_ip
@@ -187,6 +216,10 @@ main() {
       ensure_tools
       shift || true
       run_goal "${*:-}"
+      ;;
+    screenshot)
+      ensure_tools
+      capture_screenshot
       ;;
     shell)
       ensure_tools
