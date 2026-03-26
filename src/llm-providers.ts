@@ -615,7 +615,7 @@ class QwenCliProvider implements LLMProvider {
     supportsStreaming: false,
   };
 
-  private buildPromptParts(messages: ChatMessage[]) {
+  private buildPromptBlocks(messages: ChatMessage[]) {
     const parts: Array<
       { type: "text"; text: string } |
       { type: "image"; mimeType: string; data: string }
@@ -662,57 +662,33 @@ class QwenCliProvider implements LLMProvider {
     return parts;
   }
 
-  private parseStreamJsonOutput(output: string): ActionDecision {
-    const lines = output
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const parsed = JSON.parse(lines[i]) as Record<string, any>;
-        if (parsed.type === "result" && typeof parsed.result === "string") {
-          return parseJsonResponse(parsed.result);
-        }
-      } catch {
-        // ignore malformed lines
-      }
-    }
-
-    throw new Error("Qwen CLI stream-json output did not contain a final result");
-  }
-
-  async getDecision(messages: ChatMessage[]): Promise<ActionDecision> {
+  private async callAcp(messages: ChatMessage[]): Promise<string> {
     const systemPrompt = messages.find((msg) => msg.role === "system");
+    const payload = JSON.stringify({
+      systemPrompt: typeof systemPrompt?.content === "string" ? systemPrompt.content : SYSTEM_PROMPT,
+      prompt: this.buildPromptBlocks(messages),
+      authType: Config.QWEN_CLI_AUTH_TYPE,
+    });
+
     const proc = Bun.spawn(
       [
-        Config.QWEN_CLI_BIN,
-        "--auth-type",
-        Config.QWEN_CLI_AUTH_TYPE,
-        "--output-format",
-        "stream-json",
-        "--input-format",
-        "stream-json",
-        "--system-prompt",
-        typeof systemPrompt?.content === "string" ? systemPrompt.content : SYSTEM_PROMPT,
+        "bun",
+        "scripts/qwen-acp-client.ts",
+        process.cwd(),
       ],
       {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
-        env: process.env,
+        env: {
+          ...process.env,
+          QWEN_CLI_BIN: Config.QWEN_CLI_BIN,
+          QWEN_CLI_AUTH_TYPE: Config.QWEN_CLI_AUTH_TYPE,
+        },
       }
     );
 
-    const payload = JSON.stringify({
-      type: "user",
-      message: {
-        role: "user",
-        content: this.buildPromptParts(messages),
-      },
-    });
-
-    proc.stdin.write(`${payload}\n`);
+    proc.stdin.write(payload);
     proc.stdin.end();
 
     const [stdout, stderr, exitCode] = await Promise.all([
@@ -722,10 +698,15 @@ class QwenCliProvider implements LLMProvider {
     ]);
 
     if (exitCode !== 0) {
-      throw new Error(stderr.trim() || `Qwen CLI failed with exit code ${exitCode}`);
+      throw new Error(stderr.trim() || `Qwen ACP helper failed with exit code ${exitCode}`);
     }
 
-    return this.parseStreamJsonOutput(stdout);
+    return stdout.trim();
+  }
+
+  async getDecision(messages: ChatMessage[]): Promise<ActionDecision> {
+    const text = await this.callAcp(messages);
+    return parseJsonResponse(text);
   }
 }
 
